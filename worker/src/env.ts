@@ -9,6 +9,11 @@ export interface Env {
   AWS_SECRET_ACCESS_KEY?: string;
   POSTHOG_API_KEY?: string;
   DASH_PASSWORD?: string; // secret
+  INGEST_SECRET?: string; // secret, shared with the Apps Scripts
+  ANTHROPIC_API_KEY?: string; // secret, optional: AI reply drafts
+  APPDB_URL?: string; // secret: ops_ro connection string
+  OWNER_EMAIL: string; // where the digest and escalations go
+  AI_MODEL?: string;
   LOCAL_DEV?: string; // .dev.vars only
 }
 

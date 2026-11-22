@@ -69,19 +69,23 @@ export async function clearFails(db: D1Database, ip: string): Promise<void> {
 }
 
 export const LOGIN_PAGE = (error = "") => `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TapTry Ops</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a"><title>TapTry Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
 <style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0f172a;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
-form{background:#fff;padding:32px;border-radius:14px;width:min(340px,86vw)}
-h1{margin:0 0 4px;font-size:20px;color:#0f172a}p{margin:0 0 20px;color:#64748b;font-size:14px}
-input{width:100%;box-sizing:border-box;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px}
-button{margin-top:12px;width:100%;padding:12px;border:0;border-radius:8px;background:#6d28d9;color:#fff;font-size:15px;font-weight:700;cursor:pointer}
-.err{color:#b91c1c;font-size:13px;margin-top:10px}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0a0a0a;color:#f4f4f4;font-family:Outfit,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+form{background:#141414;padding:30px 26px;border-radius:26px;width:min(360px,88vw)}
+h1{margin:0 0 6px;font-size:34px;font-weight:400;letter-spacing:-.02em}h1 b{font-weight:600}h1 span{color:#8d8d8d;font-weight:300}
+p{margin:0 0 22px;color:#8d8d8d;font:12px/1.4 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.08em;text-transform:uppercase}
+input{width:100%;box-sizing:border-box;padding:15px 20px;border:0;border-radius:999px;font-size:16px;background:#1f1f1f;color:#f4f4f4;outline:none}
+input:focus{box-shadow:0 0 0 2px #ff4d24}
+button{margin-top:12px;width:100%;padding:15px;border:0;border-radius:999px;background:#f4f4f4;color:#0a0a0a;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit}
+.err{color:#ff8a8a;font-size:14px;margin-top:14px}
 </style></head><body>
 <form method="post" action="/auth/login">
-<h1>TapTry Ops</h1><p>Enter your dashboard password.</p>
-<input type="password" name="password" autocomplete="current-password" autofocus required>
+<h1><b>TapTry</b><span>ops</span></h1><p>Dashboard password</p>
+<input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password">
 <button type="submit">Log in</button>
 ${error ? `<div class="err">${error}</div>` : ""}
 </form></body></html>`;
