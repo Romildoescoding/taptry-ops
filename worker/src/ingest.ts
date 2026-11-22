@@ -1,4 +1,5 @@
 import type { Env } from "./env";
+import { triage } from "./triage";
 import { nowIso } from "./env";
 
 // Rows pushed by the Apps Scripts. Each request carries at most a few hundred rows and
@@ -194,7 +195,9 @@ export function classifyMail(m: MailIn, owner: string, ownAddrs: string[]): { di
     !!m.autoReplyHeader ||
     /^(no-?reply|noreply|notifications?|do-not-reply|support-noreply)@/i.test(from) ||
     /out of (the )?office|automatic reply|auto-?reply|autoreply|on vacation|we('ve| have) received your|thank you for contacting|ticket #?\d+|request received/i.test(m.subject ?? "");
-  return { direction: "in", kind: auto ? "auto" : "human" };
+  if (auto) return { direction: "in", kind: "auto" };
+  const t = triage({ from_addr: from, from_name: parseAddr(m.from).name, subject: m.subject, body: m.body, snippet: m.snippet });
+  return { direction: "in", kind: t.verdict === "person" ? "human" : t.verdict };
 }
 
 export async function ingestMail(env: Env, inbox: string, body: { messages: MailIn[]; webapp?: string }): Promise<number> {
@@ -203,7 +206,7 @@ export async function ingestMail(env: Env, inbox: string, body: { messages: Mail
   const rows = body.messages.map((m) => {
     const { direction, kind } = classifyMail(m, owner, own);
     const from = parseAddr(m.from);
-    const keepBody = direction === "in" && (kind === "human" || kind === "romil");
+    const keepBody = direction === "in" && (kind === "human" || kind === "desk" || kind === "romil");
     return {
       id: m.id,
       inbox,

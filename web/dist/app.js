@@ -479,23 +479,49 @@
       const a = ageInfo(it);
       return `<a class="item" href="${itemHref(it)}"><div class="t"><span class="badge p${it.priority}">P${it.priority}</span>${esc(it.title)}</div>
         <div class="d">${esc(it.detail)}</div>
-        <div class="m"><span>${esc(KIND[it.kind] || it.kind)}</span>${it.inbox ? `<span>${esc(it.inbox)}@</span>` : ""}<span class="${a.late ? "late" : ""}">waiting ${a.text}${a.late ? " · over SLA" : ""}</span>${it.suggested ? "<span>reply drafted</span>" : ""}</div></a>`;
+        <div class="m"><span>${esc(KIND[it.kind] || it.kind)}</span>${it.inbox ? `<span>${esc(it.inbox)}@</span>` : ""}<span class="${a.late && it.priority <= 1 ? "late" : ""}">waiting ${a.text}${a.late && it.priority <= 1 ? " · overdue" : ""}</span>${it.suggested ? "<span>reply drafted</span>" : ""}</div></a>`;
     }).join("")}</div>`;
   }
   function bindQueue() { /* links handle navigation */ }
 
   let inboxFilter = "all";
+  const INBOX_FILTERS = [
+    ["all", "Needs you", (i) => i.priority <= 1],
+    ["p0", "Urgent", (i) => i.priority === 0],
+    ["reply", "Replies", (i) => i.priority <= 1 && (i.kind === "reply" || i.kind === "escalation")],
+    ["apps", "App & billing", (i) => ["flagged", "enterprise", "report", "subscription", "abandoned"].includes(i.kind)],
+    ["system", "System", (i) => ["system", "bounce"].includes(i.kind)],
+    ["low", "Low priority", (i) => i.priority === 2],
+  ];
   async function pageInbox() {
-    const { items } = await api("/api/inbox");
+    const { items, hidden } = await api("/api/inbox");
     lastQueue = items;
-    setCount(items.length);
-    const filters = [["all", "All"], ["p0", "Urgent"], ["reply", "Replies"], ["apps", "App & billing"], ["system", "System"]];
-    const shown = items.filter((i) => inboxFilter === "all" || (inboxFilter === "p0" && i.priority === 0) || (inboxFilter === "reply" && (i.kind === "reply" || i.kind === "escalation")) || (inboxFilter === "apps" && ["flagged", "enterprise", "report", "subscription", "abandoned"].includes(i.kind)) || (inboxFilter === "system" && ["system", "bounce"].includes(i.kind)));
-    main().innerHTML = `${head("Inbox", `<span class="badge">${items.length} open</span>`)}
-      <div class="filters">${filters.map(([k, l]) => `<button class="chip ${inboxFilter === k ? "on" : ""}" data-f="${k}">${l} ${k === "all" ? "" : `<span class="sub">${items.filter((i) => (k === "p0" && i.priority === 0) || (k === "reply" && (i.kind === "reply" || i.kind === "escalation")) || (k === "apps" && ["flagged", "enterprise", "report", "subscription", "abandoned"].includes(i.kind)) || (k === "system" && ["system", "bounce"].includes(i.kind))).length}</span>`}</button>`).join("")}</div>
-      <div style="margin-top:12px">${queueList(shown)}</div>
-      <div class="sub" style="margin-top:14px">Replies show up here when the newest message in a thread is from a lead. Answer here, or anywhere else: once a reply goes out in that thread, the item clears on its own.</div>`;
+    const needs = items.filter((i) => i.priority <= 1).length;
+    setCount(needs);
+    const chips = INBOX_FILTERS.map(([k, l, f]) => `<button class="chip ${inboxFilter === k ? "on" : ""}" data-f="${k}">${l} <span class="sub">${items.filter(f).length}</span></button>`).join("") +
+      `<button class="chip ${inboxFilter === "hidden" ? "on" : ""}" data-f="hidden">Filtered <span class="sub">${hidden.length}</span></button>`;
+    let body;
+    if (inboxFilter === "hidden") {
+      body = hidden.length
+        ? `<div class="sub" style="margin:2px 0 12px">Auto-replies, support bots, DMARC reports and tracking notifications from the last 14 days. They stay out of Needs you. Tap <b>Not junk</b> if a real reply landed here.</div>
+           <div class="list">${hidden.map((h, n) => `<div class="item" style="cursor:default"><div class="t"><span class="badge">${esc(h.reason)}</span>${esc(h.title)}</div><div class="d">${esc(h.detail)}</div>
+             <div class="m"><span>${esc(h.inbox)}@</span><span>${esc(ago(h.at))}</span></div>
+             <div class="btns"><a class="btn sm" href="#thread/${encodeURIComponent(h.inbox)}/${encodeURIComponent(h.threadId)}?k=${encodeURIComponent(h.key)}">Open</a><button class="btn sm" data-keep="${n}">Not junk</button></div></div>`).join("")}</div>`
+        : `<div class="card"><div class="empty">Nothing filtered in the last 14 days.</div></div>`;
+    } else {
+      const f = (INBOX_FILTERS.find((x) => x[0] === inboxFilter) || INBOX_FILTERS[0])[2];
+      body = queueList(items.filter(f));
+      if (inboxFilter === "all" && items.some((i) => i.priority === 2)) body += `<div class="sub" style="margin-top:12px">${items.filter((i) => i.priority === 2).length} low-priority items (support desks, unfinished checkouts) are under <a href="#inbox" data-jump="low">Low priority</a>.</div>`;
+    }
+    main().innerHTML = `${head("Inbox", `<span class="badge">${needs} need you</span>`)}<div class="filters">${chips}</div><div style="margin-top:12px">${body}</div>
+      <div class="sub" style="margin-top:14px">A reply shows up here when the newest message in a thread is from a person. Answer it here or in Gmail: once a reply goes out in that thread, the item clears by itself.</div>`;
     $$("[data-f]").forEach((b) => (b.onclick = () => { inboxFilter = b.dataset.f; pageInbox(); }));
+    $$("[data-jump]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); inboxFilter = a.dataset.jump; pageInbox(); }));
+    $$("[data-keep]").forEach((b) => (b.onclick = async () => {
+      const h = hidden[Number(b.dataset.keep)];
+      b.disabled = true;
+      try { await api("/api/inbox/keep", { method: "POST", body: JSON.stringify({ key: h.key, messageId: h.messageId }) }); toast("Moved to Needs you"); pageInbox(); } catch (e) { toast(e.message); b.disabled = false; }
+    }));
   }
 
   async function setState(key, state, hours) {
@@ -747,5 +773,5 @@
   }
   window.addEventListener("hashchange", render);
   render().then(() => refreshStale(false));
-  api("/api/inbox").then((r) => setCount(r.items.length)).catch(() => {});
+  api("/api/inbox").then((r) => setCount(r.items.filter((i) => i.priority <= 1).length)).catch(() => {});
 })();

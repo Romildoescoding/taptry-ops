@@ -25,7 +25,7 @@ const bar = (pct: number, color: string) =>
 export async function buildDigest(env: Env): Promise<{ to: string; subject: string; html: string }> {
   const yday = parseRange({ preset: "yesterday" });
   const week = parseRange({ preset: "7d" });
-  const [o, w, queue] = await Promise.all([outreachSummary(env, yday), outreachSummary(env, week), buildQueue(env)]);
+  const [o, w, queue] = await Promise.all([outreachSummary(env, yday), outreachSummary(env, week), buildQueue(env).then((q) => q.filter((x) => x.priority <= 1))]);
   const [rows, fleet, budget, prices, ipv4] = await Promise.all([
     env.DB.prepare("SELECT day, service, region, usd FROM aws_cost_daily").all<CostRow>(),
     env.DB.prepare("SELECT region, kind, resource_id, detail, state, size_gb, launched_at FROM aws_fleet").all<FleetItem>(),

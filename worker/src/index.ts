@@ -11,7 +11,7 @@ import { ingestMail, ingestSheet, SHEET_TABS } from "./ingest";
 import { collectAppDb } from "./appdb";
 import { outreachSummary, parseRange, TASK_MAX_GAP } from "./outreach";
 import { listLeads, leadDetail, setLeadStatus } from "./leads";
-import { aiDraft, buildQueue, getThread, sendReply, setQueueState } from "./inbox";
+import { aiDraft, buildInbox, buildQueue, getThread, keepThread, sendReply, setQueueState } from "./inbox";
 import { gasCall, INBOXES, isInbox, saveWebapp } from "./gas";
 import { buildDigest } from "./digest";
 
@@ -87,7 +87,8 @@ app.get("/api/overview", async (c) => {
       row.display === "BoldNumber" || (row.kind === "TrendsQuery" && /daily active|weekly active|\bDAU|\bWAU/i.test(row.name)),
     ).catch(() => []),
   ]);
-  return c.json({ outreach, queue: { count: queue.length, urgent: queue.filter((q) => q.priority === 0).length, top: queue.slice(0, 5) }, costs, product, host: c.env.POSTHOG_HOST });
+  const needs = queue.filter((q) => q.priority <= 1);
+  return c.json({ outreach, queue: { count: needs.length, urgent: queue.filter((q) => q.priority === 0).length, low: queue.length - needs.length, top: queue.slice(0, 5) }, costs, product, host: c.env.POSTHOG_HOST });
 });
 
 app.get("/api/outreach", async (c) => c.json(await outreachSummary(c.env, parseRange(rangeQ(c)))));
@@ -107,7 +108,13 @@ app.post("/api/leads/:email/status", async (c) => {
   } catch (e) { return errJson(c, e, 400); }
 });
 
-app.get("/api/inbox", async (c) => c.json({ items: await buildQueue(c.env) }));
+app.get("/api/inbox", async (c) => c.json(await buildInbox(c.env)));
+app.post("/api/inbox/keep", async (c) => {
+  const { key, messageId } = await c.req.json<{ key?: string; messageId?: string }>();
+  if (!key || !messageId) return c.json({ error: "bad request" }, 400);
+  await keepThread(c.env, key, messageId);
+  return c.json({ ok: true });
+});
 app.post("/api/inbox/state", async (c) => {
   const { key, state, hours } = await c.req.json<{ key: string; state: "handled" | "snoozed" | "dead" | "open"; hours?: number }>();
   if (!key || !["handled", "snoozed", "dead", "open"].includes(state)) return c.json({ error: "bad request" }, 400);

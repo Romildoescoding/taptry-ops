@@ -3,6 +3,7 @@ import { nowIso } from "./env";
 import { gasCall, isInbox, type Inbox, type ThreadMsg } from "./gas";
 import { draftReply, type DraftMsg } from "./ai";
 import { TASK_MAX_GAP } from "./outreach";
+import { stripHtml, triage } from "./triage";
 
 // The "Needs you" queue: lead replies nobody has answered, escalations, and app or
 // system problems. Built on request from the mirrored data plus your decisions.
@@ -23,23 +24,31 @@ export interface QueueItem {
   link?: string;
 }
 
-const HOT = /pric|cost|enterprise|team|studio|company|call|meeting|demo|contract|legal|gdpr|invoice|discount|partner|invest|angry|scam|spam|stop emailing/i;
+/** Mail kept out of "Needs you" by the triage rules, so you can check nothing real was hidden. */
+export interface HiddenItem { key: string; messageId: string; title: string; detail: string; reason: string; at: string; inbox: string; threadId: string }
+
 
 export async function buildQueue(env: Env): Promise<QueueItem[]> {
+  return (await buildInbox(env)).items;
+}
+
+export async function buildInbox(env: Env): Promise<{ items: QueueItem[]; hidden: HiddenItem[] }> {
   const db = env.DB;
   const now = nowIso();
-  const [replies, escs, apps, states, lastDaily, bounces] = await db.batch([
-    // Latest message in each thread is a human inbound message => nobody has answered it.
+  const since14 = new Date(Date.now() - 14 * 86400000).toISOString();
+  const [replies, escs, apps, states, lastDaily, bounces, filtered] = await db.batch([
+    // Latest message in each thread is an inbound message from a person or a support desk => nobody has answered it.
+    // Auto-replies don't count as the latest message, so an out-of-office after a real reply doesn't bury it.
     db.prepare(
       `WITH last AS (
-         SELECT inbox, thread_id, max(sent_at) last_at FROM mail_msgs WHERE kind IN ('human','out') GROUP BY inbox, thread_id
+         SELECT inbox, thread_id, max(sent_at) last_at FROM mail_msgs WHERE kind IN ('human','desk','out') GROUP BY inbox, thread_id
        )
-       SELECT m.inbox, m.thread_id, m.from_addr, m.from_name, m.subject, m.snippet, m.body, m.sent_at,
+       SELECT m.id, m.kind, m.inbox, m.thread_id, m.from_addr, m.from_name, m.subject, m.snippet, m.body, m.sent_at,
               l2.status lead_status, l2.app, l2.developer, l2.email lead_email
        FROM mail_msgs m
        JOIN last l ON l.inbox = m.inbox AND l.thread_id = m.thread_id AND l.last_at = m.sent_at
        LEFT JOIN leads l2 ON l2.email = m.from_addr OR (l2.thread_id <> '' AND l2.thread_id = m.thread_id)
-       WHERE m.kind = 'human' AND m.sent_at > ?1
+       WHERE m.kind IN ('human','desk') AND m.sent_at > ?1
        GROUP BY m.inbox, m.thread_id`,
     ).bind(new Date(Date.now() - 45 * 86400000).toISOString()),
     db.prepare(`SELECT * FROM escalations WHERE status IN ('waiting', '', 'open', 'pending')`),
@@ -49,25 +58,46 @@ export async function buildQueue(env: Env): Promise<QueueItem[]> {
     db.prepare(
       `SELECT inbox, count(*) sent, sum(status='bounced') bounced FROM leads WHERE first_sent_at >= ?1 GROUP BY inbox`,
     ).bind(new Date(Date.now() - 3 * 86400000).toISOString()),
+    // Recently filtered mail, newest per thread, for the "Filtered" list.
+    db.prepare(
+      `SELECT id, inbox, thread_id, from_addr, from_name, subject, snippet, body, max(sent_at) sent_at FROM mail_msgs
+       WHERE direction = 'in' AND kind IN ('auto','noise') AND sent_at > ?1 GROUP BY inbox, thread_id ORDER BY sent_at DESC LIMIT 80`,
+    ).bind(since14),
   ]);
+  const st = new Map((states.results as { key: string; state: string; snooze_until: string | null; updated_at: string }[]).map((s) => [s.key, s]));
+  const hidden: HiddenItem[] = [];
+  const reclass: Record<string, string[]> = { auto: [], noise: [], desk: [] };
+  const owner = env.OWNER_EMAIL.toLowerCase();
 
   const items: QueueItem[] = [];
   const escByThread = new Map<string, any>();
   for (const e of escs.results as any[]) if (e.thread_id) escByThread.set(e.thread_id, e);
 
+  const titleOf = (m: any) => `${m.from_name || m.developer || m.from_addr}${m.app ? ` · ${m.app}` : ""}`;
+  const textOf = (m: any) => stripHtml(m.body || m.snippet || "").replace(/\s+/g, " ").slice(0, 220);
   for (const m of replies.results as any[]) {
     if (["opted_out", "bounced", "do_not_contact"].includes(m.lead_status ?? "")) continue;
+    const key = `thread:${m.inbox}:${m.thread_id}`;
     const esc = escByThread.get(m.thread_id);
+    const kept = st.get(key)?.state === "keep";
+    const t = kept ? { verdict: "person" as const, hot: false } : triage(m);
+    if (!esc && (t.verdict === "auto" || t.verdict === "noise")) {
+      // Mail stored before these rules existed: re-file it so analytics skip it too.
+      reclass[t.verdict].push(m.id);
+      hidden.push({ key, messageId: m.id, title: titleOf(m), detail: textOf(m), reason: t.reason ?? "Auto-reply", at: m.sent_at, inbox: m.inbox, threadId: m.thread_id });
+      continue;
+    }
+    if (t.verdict === "desk" && m.kind !== "desk") reclass.desk.push(m.id);
     if (esc) escByThread.delete(m.thread_id);
-    const hot = HOT.test(`${m.subject} ${m.body ?? m.snippet} ${esc?.summary ?? ""}`);
+    const priority = esc || t.hot ? 0 : t.verdict === "desk" ? 2 : 1;
     items.push({
-      key: `thread:${m.inbox}:${m.thread_id}`,
+      key,
       kind: esc ? "escalation" : "reply",
-      priority: hot ? 0 : 1,
-      title: `${m.from_name || m.developer || m.from_addr}${m.app ? ` · ${m.app}` : ""}`,
-      detail: esc?.summary || (m.body ?? m.snippet ?? "").replace(/\s+/g, " ").slice(0, 220),
+      priority,
+      title: titleOf(m) + (t.verdict === "desk" && !esc ? " · support desk" : ""),
+      detail: esc?.summary || textOf(m),
       at: m.sent_at,
-      slaHours: hot ? 12 : 24,
+      slaHours: priority === 0 ? 12 : priority === 1 ? 24 : 72,
       inbox: m.inbox,
       threadId: m.thread_id,
       leadEmail: m.lead_email ?? m.from_addr,
@@ -77,15 +107,15 @@ export async function buildQueue(env: Env): Promise<QueueItem[]> {
   }
   // Escalations whose thread isn't in the mail mirror yet (scripts not installed, or older).
   for (const e of escByThread.values()) {
-    const hot = HOT.test(e.summary ?? "");
+    // The reply task already decided these need you.
     items.push({
       key: `esc:${e.id}`,
       kind: "escalation",
-      priority: hot ? 0 : 1,
+      priority: 0,
       title: `${e.lead_email} · #${e.id}`,
       detail: e.summary ?? "",
       at: e.created_at ?? now,
-      slaHours: hot ? 12 : 24,
+      slaHours: 12,
       inbox: e.inbox,
       threadId: e.thread_id || undefined,
       leadEmail: e.lead_email,
@@ -96,7 +126,8 @@ export async function buildQueue(env: Env): Promise<QueueItem[]> {
   for (const a of apps.results as { kind: string; id: string; data: string }[]) {
     const d = JSON.parse(a.data);
     if (a.kind === "flagged") items.push({ key: `app:${a.id}`, kind: "flagged", priority: 0, title: `FLAGGED upload · ${d.name}`, detail: `${d.slug} by @${d.owner_usertag}. Nobody can run it until you approve or reject it.`, at: d.updatedAt ?? d.createdAt ?? now, slaHours: 24 });
-    if (a.kind === "enterprise") items.push({ key: `ent:${a.id}`, kind: "enterprise", priority: 0, title: `Enterprise request · ${d.company || d.name}`, detail: `${d.name} <${d.email}>, ${d.expected_trials} runs. ${d.use_case}`, at: d.createdAt ?? now, slaHours: 12, leadEmail: d.email });
+    const entEmail = String(d.email ?? "").toLowerCase();
+    if (a.kind === "enterprise" && entEmail !== owner && !entEmail.endsWith("@taptry.in")) items.push({ key: `ent:${a.id}`, kind: "enterprise", priority: 0, title: `Enterprise request · ${d.company || d.name}`, detail: `${d.name} <${d.email}>, ${d.expected_trials} runs. ${d.use_case}`, at: d.createdAt ?? now, slaHours: 12, leadEmail: d.email });
     if (a.kind === "report") items.push({ key: `rep:${a.id}`, kind: "report", priority: ["COPYRIGHT", "MALWARE"].includes(d.reason) ? 0 : 1, title: `${d.reason} report · ${d.app_name}`, detail: d.note || `On /app/${d.app_slug}${d.reporter_email ? `, from ${d.reporter_email}` : ""}`, at: d.createdAt ?? now, slaHours: 24 });
     if (a.kind === "subscription" && (d.status !== "ACTIVE" || d.cancel_at_period_end))
       items.push({ key: `sub:${a.id}:${d.status}:${d.cancel_at_period_end ? 1 : 0}`, kind: "subscription", priority: 0, title: `${d.plan} subscription ${d.cancel_at_period_end ? "set to cancel" : d.status.toLowerCase().replace("_", " ")}`, detail: `Period ends ${String(d.current_period_end).slice(0, 10)}`, at: d.status_event_at ?? d.updatedAt ?? now, slaHours: 24 });
@@ -112,17 +143,36 @@ export async function buildQueue(env: Env): Promise<QueueItem[]> {
     }
   }
 
-  const st = new Map((states.results as { key: string; state: string; snooze_until: string | null; updated_at: string }[]).map((s) => [s.key, s]));
-  return items
+  for (const f of filtered.results as any[]) {
+    const key = `thread:${f.inbox}:${f.thread_id}`;
+    if (hidden.some((h) => h.key === key) || items.some((i) => i.key === key)) continue;
+    hidden.push({ key, messageId: f.id, title: titleOf(f), detail: textOf(f), reason: triage(f).reason ?? "Auto-reply", at: f.sent_at, inbox: f.inbox, threadId: f.thread_id });
+  }
+  const fixes = Object.entries(reclass).filter(([, ids]) => ids.length);
+  if (fixes.length) {
+    await db.batch(fixes.map(([kind, ids]) => db.prepare("UPDATE mail_msgs SET kind = ?1 WHERE id IN (SELECT value FROM json_each(?2))").bind(kind, JSON.stringify(ids))));
+  }
+
+  const visible = items
     .filter((it) => {
       const s = st.get(it.key);
-      if (!s) return true;
+      if (!s || s.state === "keep") return true;
       if (s.state === "snoozed") return !!s.snooze_until && s.snooze_until < now;
       // A reply that arrives after you dealt with a thread reopens it.
       if (it.kind === "reply" || it.kind === "escalation") return it.at > s.updated_at;
       return false;
     })
     .sort((a, b) => a.priority - b.priority || a.at.localeCompare(b.at));
+  hidden.sort((a, b) => b.at.localeCompare(a.at));
+  return { items: visible, hidden };
+}
+
+/** "Not junk": shows a filtered thread in Needs you and keeps it there. */
+export async function keepThread(env: Env, key: string, messageId: string) {
+  await env.DB.batch([
+    env.DB.prepare("UPDATE mail_msgs SET kind = 'human' WHERE id = ? AND direction = 'in'").bind(messageId),
+    env.DB.prepare("INSERT OR REPLACE INTO queue_state (key, state, snooze_until, updated_at) VALUES (?, 'keep', NULL, ?)").bind(key, nowIso()),
+  ]);
 }
 
 const istDayKey = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
