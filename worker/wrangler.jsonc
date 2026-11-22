@@ -18,7 +18,7 @@
     "run_worker_first": true
   },
   "d1_databases": [
-    { "binding": "DB", "database_name": "taptry-ops", "database_id": "REPLACE_AFTER_wrangler_d1_create", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "taptry-ops", "database_id": "37062f62-2f73-4dda-a81e-b8b11187bc57", "migrations_dir": "migrations" }
   ],
   // Cloudflare crons run in UTC. 03:00 UTC = 8:30 AM IST.
   "triggers": { "crons": ["*/15 * * * *", "5 * * * *", "0 3 * * *"] },
