@@ -15,8 +15,13 @@
  */
 
 var BACKFILL_DAYS = 14;
-var WINDOW_SEC = 6 * 3600;
+var WINDOW_SEC = 2 * 3600;
 var TIME_BUDGET_MS = 4.5 * 60 * 1000;
+// Gmail allows a limited number of reads per minute per inbox. Reads are spaced out,
+// and if Gmail still says "quota exceeded" the script waits and tries again. The first
+// 14-day catch-up therefore takes a few runs; it carries on by itself every 5 minutes.
+var PAUSE_MS = 150;
+var STOP = 'STOP_FOR_NOW';
 
 function setup() {
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
@@ -45,6 +50,7 @@ function pushMail() {
       checkpoint = end;
       p.setProperty('CHECKPOINT', String(checkpoint));
     }
+    Logger.log('Mail synced up to ' + new Date(checkpoint * 1000) + (checkpoint < now - 900 ? '. Still catching up; the next runs continue automatically.' : '. Up to date.'));
   } finally {
     lock.releaseLock();
   }
@@ -53,17 +59,31 @@ function pushMail() {
 function fetchWindow_(after, before, started) {
   var q = 'after:' + after + ' before:' + before + ' -in:chats -in:spam -in:trash -in:drafts';
   var ids = [], token = null;
-  do {
-    var res = Gmail.Users.Messages.list('me', { q: q, maxResults: 500, pageToken: token });
-    (res.messages || []).forEach(function (m) { ids.push(m.id); });
-    token = res.nextPageToken;
-  } while (token);
+  try {
+    do {
+      var res = gmail_(function () { return Gmail.Users.Messages.list('me', { q: q, maxResults: 500, pageToken: token }); }, started);
+      (res.messages || []).forEach(function (m) { ids.push(m.id); });
+      token = res.nextPageToken;
+    } while (token);
+  } catch (e) {
+    if (String(e && e.message) === STOP) return null;
+    throw e;
+  }
   var out = [];
   for (var i = 0; i < ids.length; i++) {
     if (Date.now() - started > TIME_BUDGET_MS) return null;
-    var meta = Gmail.Users.Messages.get('me', ids[i], {
-      format: 'metadata', metadataHeaders: ['From', 'To', 'Subject', 'Auto-Submitted', 'Precedence', 'X-Autoreply', 'X-Autorespond'],
-    });
+    var id = ids[i];
+    var meta;
+    try {
+      meta = gmail_(function () {
+        return Gmail.Users.Messages.get('me', id, {
+          format: 'metadata', metadataHeaders: ['From', 'To', 'Subject', 'Auto-Submitted', 'Precedence', 'X-Autoreply', 'X-Autorespond'],
+        });
+      }, started);
+    } catch (e) {
+      if (String(e && e.message) === STOP) return null;
+      throw e;
+    }
     var labels = meta.labelIds || [];
     var h = headers_(meta.payload && meta.payload.headers);
     var m = {
@@ -72,7 +92,12 @@ function fetchWindow_(after, before, started) {
       precedence: h['precedence'] || '', autoReplyHeader: h['x-autoreply'] || h['x-autorespond'] || '',
     };
     if (labels.indexOf('SENT') < 0) {
-      try { m.body = cleanBody_(GmailApp.getMessageById(meta.id).getPlainBody()).slice(0, 6000); } catch (e) { m.body = ''; }
+      try {
+        m.body = cleanBody_(gmail_(function () { return GmailApp.getMessageById(meta.id).getPlainBody(); }, started)).slice(0, 6000);
+      } catch (e) {
+        if (String(e && e.message) === STOP) return null;
+        m.body = '';
+      }
     }
     out.push(m);
   }
@@ -147,6 +172,24 @@ function cleanBody_(text) {
     out.push(l);
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Runs one Gmail call, spaced out, waiting and retrying when Gmail's per-minute limit is hit. */
+function gmail_(fn, started) {
+  var wait = 15000;
+  for (;;) {
+    try {
+      var r = fn();
+      Utilities.sleep(PAUSE_MS);
+      return r;
+    } catch (e) {
+      var msg = String((e && e.message) || e);
+      if (!/quota|rate limit|too many|429|try again later/i.test(msg)) throw e;
+      if (Date.now() - started + wait > TIME_BUDGET_MS) throw new Error(STOP); // pick up again on the next run
+      Utilities.sleep(wait);
+      wait = Math.min(wait * 2, 60000);
+    }
+  }
 }
 
 function headers_(list) {
