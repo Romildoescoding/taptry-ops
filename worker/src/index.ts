@@ -170,6 +170,11 @@ app.get("/api/stale", async (c) => {
     .filter(([k]) => JOBS[k] && ENABLED[k](c.env))
     .filter(([k, min]) => !last.get(k) || Date.now() - Date.parse(last.get(k)!) > min * 60000)
     .map(([k]) => k);
+  // Insights saved before live queries existed have no query yet: refresh them now.
+  if (!stale.includes("posthog") && ENABLED.posthog(c.env)) {
+    const old = await c.env.DB.prepare("SELECT count(*) n FROM ph_insights WHERE query IS NULL").first<{ n: number }>();
+    if (old?.n) stale.push("posthog");
+  }
   return c.json({ stale });
 });
 
