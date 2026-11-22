@@ -12,7 +12,7 @@ import { collectAppDb } from "./appdb";
 import { outreachSummary, parseRange, TASK_MAX_GAP } from "./outreach";
 import { listLeads, leadDetail, setLeadStatus } from "./leads";
 import { aiDraft, buildQueue, getThread, sendReply, setQueueState } from "./inbox";
-import { gasCall, INBOXES, isInbox } from "./gas";
+import { gasCall, INBOXES, isInbox, saveWebapp } from "./gas";
 import { buildDigest } from "./digest";
 
 type Ctx = { Bindings: Env; Variables: { body: string } };
@@ -148,7 +148,7 @@ app.get("/api/system", async (c) => {
     collectors: runs.results,
     scripts: [
       { name: "Tracker sheet", last: ["Leads", "Escalations", "Nudges", "Log"].map((t) => cfg[`last_push_sheet_${t}`]).filter(Boolean).sort().pop() ?? null, maxMinutes: 20 },
-      ...INBOXES.map((i) => ({ name: `${i}@ inbox`, last: cfg[`last_push_mail_${i}`] ?? null, maxMinutes: 20, webapp: !!cfg[`gas_url_${i}`] })),
+      ...INBOXES.map((i) => ({ name: `${i}@ inbox`, inbox: i, last: cfg[`last_push_mail_${i}`] ?? null, maxMinutes: 20, webapp: !!cfg[`gas_url_${i}`], webappUrl: cfg[`gas_url_${i}`] ?? null })),
     ],
     tasks: Object.entries(TASK_MAX_GAP).map(([k, v]) => ({ family: k, label: v.label, last: lastTask.get(k) ?? null, maxHours: v.hours })),
     secrets: {
@@ -176,6 +176,13 @@ app.get("/api/stale", async (c) => {
     if (old?.n) stale.push("posthog");
   }
   return c.json({ stale });
+});
+
+app.put("/api/webapp/:inbox", async (c) => {
+  const inbox = c.req.param("inbox");
+  if (!isInbox(inbox)) return c.json({ ok: false, error: "unknown inbox" }, 400);
+  const { url } = await c.req.json<{ url?: string }>().catch(() => ({ url: undefined }));
+  return c.json(await saveWebapp(c.env, inbox, url ?? ""));
 });
 
 app.get("/api/config", async (c) => {

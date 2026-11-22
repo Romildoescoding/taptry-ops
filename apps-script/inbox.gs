@@ -111,6 +111,7 @@ function doPost(e) {
     var req = JSON.parse(e.postData.contents);
     verify_(req.ts, req.sig, req.payload);
     var p = JSON.parse(req.payload);
+    if (p.action === 'ping') return json_({ ok: true, inbox: inbox_() });
     if (p.action === 'thread') return json_({ ok: true, messages: thread_(p.threadId) });
     if (p.action === 'reply') return json_(reply_(p.threadId, p.body));
     if (p.action === 'sync') { pushMail(); return json_({ ok: true }); }

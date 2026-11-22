@@ -661,7 +661,12 @@
         return `<div class="item" style="cursor:default"><div class="t">${label} ${st}</div>${c && !c.ok && c.error ? `<div class="d late">${esc(c.error)}</div>` : ""}<div class="m"><span>last run ${c ? esc(ago(c.started_at)) : "never"}</span><span>last success ${c?.last_ok ? esc(ago(c.last_ok)) : "never"}</span></div><div><button class="btn sm" data-run="${k}">Run now</button></div></div>`;
       }).join("")}</div></div>
       <div class="grid halves" style="margin-top:14px">
-        <div class="card"><h2>Google scripts</h2>${s.scripts.map((x) => `<div class="rowbar" style="grid-template-columns:1fr auto"><span><i class="dot ${fresh(x.last, x.maxMinutes)}"></i>${esc(x.name)}${x.webapp === false ? ` <span class="badge warn">web app not deployed</span>` : ""}</span><span class="n">${esc(ago(x.last))}</span></div>`).join("")}</div>
+        <div class="card"><h2>Google scripts</h2>${s.scripts.map((x) => `<div class="rowbar" style="grid-template-columns:1fr auto"><span><i class="dot ${fresh(x.last, x.maxMinutes)}"></i>${esc(x.name)}${x.inbox && !x.webapp ? ` <span class="badge warn">web app link needed</span>` : ""}</span><span class="n">${esc(ago(x.last))}</span></div>`).join("")}
+          <h2 style="margin-top:22px">Web app links</h2>
+          <div class="sub">Needed to read conversations and send replies from here. In each inbox's script: Deploy → Manage deployments → copy the Web app URL, paste it below.</div>
+          ${s.scripts.filter((x) => x.inbox).map((x) => `<div style="margin-top:12px"><div class="label" style="margin-bottom:6px">${esc(x.inbox)}@ ${x.webapp ? '<span class="badge ok">saved</span>' : ""}</div>
+            <div style="display:flex;gap:8px"><input class="search" style="margin:0;font-size:14px;padding:11px 16px" data-wa="${esc(x.inbox)}" placeholder="https://script.google.com/macros/s/…/exec" value="${esc(x.webappUrl || "")}"><button class="btn primary sm" data-wasave="${esc(x.inbox)}">Save & test</button></div></div>`).join("")}
+        </div>
         <div class="card"><h2>Scheduled tasks (from the Log tab)</h2>${s.tasks.map((x) => `<div class="rowbar" style="grid-template-columns:1fr auto"><span><i class="dot ${!x.last ? "off" : Date.now() - toDate(x.last) > x.maxHours * 3600000 ? "bad" : ""}"></i>${esc(x.label)}</span><span class="n">${esc(ago(x.last))}</span></div>`).join("")}<div class="sub" style="margin-top:8px">Reply check and nudges only log when they had something to do, so a quiet day there is normal.</div></div>
       </div>
       <div class="grid halves" style="margin-top:14px">
@@ -674,6 +679,18 @@
       b.disabled = true; b.textContent = "Running…";
       try { const r = await api("/api/run/" + b.dataset.run, { method: "POST" }); toast(r.ok ? `Done · ${r.rows} rows` : `Failed: ${r.error}`, 4000); } catch (e) { toast(e.message); }
       pageSystem();
+    }));
+    $$("[data-wasave]").forEach((b) => (b.onclick = async () => {
+      const inbox = b.dataset.wasave;
+      const url = $(`[data-wa="${inbox}"]`).value.trim();
+      if (!url) return toast("Paste the link first");
+      b.disabled = true; b.textContent = "Testing…";
+      try {
+        const r = await api("/api/webapp/" + inbox, { method: "PUT", body: JSON.stringify({ url }) });
+        toast(r.ok ? `${inbox}@ web app works ✓` : r.error, r.ok ? 3000 : 8000);
+        if (r.ok) return pageSystem();
+      } catch (e) { toast(e.message, 6000); }
+      b.disabled = false; b.textContent = "Save & test";
     }));
     $("#savePrices").onclick = async () => {
       try { await api("/api/config/ec2_prices", { method: "PUT", body: JSON.stringify(JSON.parse($("#prices").value || "{}")) }); toast("Saved"); } catch (e) { toast("Not valid JSON: " + e.message); }

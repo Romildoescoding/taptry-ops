@@ -78,13 +78,13 @@ describe("Apps Script signature format", () => {
   });
 });
 
-import { normalizeWebappUrl } from "../src/ingest";
+import { validWebappUrl } from "../src/gas";
 import { test as t2, expect as e2 } from "vitest";
-t2("web app URLs from Workspace accounts are normalised", () => {
-  const plain = "https://script.google.com/macros/s/AKfy-cb_1/exec";
-  e2(normalizeWebappUrl(plain)).toBe(plain);
-  e2(normalizeWebappUrl("https://script.google.com/a/macros/taptry.in/s/AKfy-cb_1/exec")).toBe(plain);
-  e2(normalizeWebappUrl("https://script.google.com/a/*/macros/s/AKfy-cb_1/exec")).toBe(plain);
-  e2(normalizeWebappUrl("https://evil.example/macros/s/x/exec")).toBeNull();
-  e2(normalizeWebappUrl(undefined)).toBeNull();
+t2("pasted web app links are accepted in both Google forms", () => {
+  const id = "AKfycbzMTAqam6q7Sb-ZOVzdcY3Q67pTViWzVxE_PlCEFt1NdXUKNaY";
+  e2(validWebappUrl(` https://script.google.com/macros/s/${id}/exec `)).toBe(`https://script.google.com/macros/s/${id}/exec`);
+  e2(validWebappUrl(`https://script.google.com/a/macros/taptry.in/s/${id}/exec`)).toBe(`https://script.google.com/a/macros/taptry.in/s/${id}/exec`);
+  e2(validWebappUrl(`https://script.google.com/macros/s/${id}/dev`)).toBeNull();
+  e2(validWebappUrl("https://evil.example/macros/s/x/exec")).toBeNull();
+  e2(validWebappUrl(undefined)).toBeNull();
 });

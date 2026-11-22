@@ -169,7 +169,7 @@ table.t tr.click { cursor: pointer; } table.t tr.click:hover td { background: #1
 .composer { background: var(--panel); border-radius: var(--r-card); padding: 14px; margin-top: 14px; display: grid; gap: 10px; border: 1px solid var(--line); }
 .composer textarea { width: 100%; min-height: 150px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px; font-size: 16px; line-height: 1.45; resize: vertical; }
 .btns { display: flex; gap: 8px; flex-wrap: wrap; }
-.btn { border: 0; border-radius: var(--r-pill); padding: 12px 18px; font-size: 15px; cursor: pointer; background: var(--card2); color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+.btn { white-space: nowrap; flex: none; border: 0; border-radius: var(--r-pill); padding: 12px 18px; font-size: 15px; cursor: pointer; background: var(--card2); color: var(--ink); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
 .btn.primary { background: var(--ink); color: #0a0a0a; font-weight: 500; }
 .btn.hot { background: var(--orange); color: #fff; }
 .btn:disabled { opacity: .5; }
