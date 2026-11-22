@@ -3,6 +3,7 @@ export interface Env {
   ASSETS: Fetcher;
   POSTHOG_HOST: string;
   POSTHOG_DASHBOARDS: string; // comma-separated dashboard ids
+  POSTHOG_PROJECT_ID?: string; // optional; found from the key when empty
   AWS_REGIONS: string; // comma-separated
   AWS_ACCESS_KEY_ID?: string;
   AWS_SECRET_ACCESS_KEY?: string;

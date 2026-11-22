@@ -37,10 +37,17 @@ export function tilesToRows(dashboardId: string, tiles: Tile[]): InsightRow[] {
 }
 
 async function projectId(env: Env, get: (p: string) => Promise<any>): Promise<string> {
+  if (env.POSTHOG_PROJECT_ID) return env.POSTHOG_PROJECT_ID;
   const cached = await getConfig<string | null>(env.DB, "posthog_project_id", null);
   if (cached) return cached;
-  const body = await get("/api/projects/");
-  const id = String(body.results?.[0]?.id ?? "");
+  // A key limited to one project can read "@current" but often not the project list.
+  let id = "";
+  try {
+    id = String((await get("/api/projects/@current/")).id ?? "");
+  } catch {
+    const body = await get("/api/projects/");
+    id = String(body.results?.[0]?.id ?? "");
+  }
   if (!id) throw new Error("PostHog: the API key sees no project");
   await env.DB.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('posthog_project_id', ?)").bind(JSON.stringify(id)).run();
   return id;
@@ -50,6 +57,8 @@ export async function collectPosthog(env: Env): Promise<number> {
   if (!env.POSTHOG_API_KEY) throw new Error("POSTHOG_API_KEY not set");
   const get = async (path: string) => {
     const res = await fetch(env.POSTHOG_HOST + path, { headers: { Authorization: `Bearer ${env.POSTHOG_API_KEY}` } });
+    if (res.status === 401 || res.status === 403)
+      throw new Error(`PostHog ${path}: HTTP ${res.status}. The key needs Read on Project, Dashboard, Insight and Query, and access to this project`);
     if (!res.ok) throw new Error(`PostHog ${path}: HTTP ${res.status}`);
     return res.json() as Promise<any>;
   };
