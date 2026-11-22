@@ -1,14 +1,13 @@
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
-  ACCESS_TEAM_DOMAIN: string; // e.g. taptry.cloudflareaccess.com
-  ACCESS_AUD: string;
   POSTHOG_HOST: string;
   POSTHOG_DASHBOARDS: string; // comma-separated dashboard ids
   AWS_REGIONS: string; // comma-separated
   AWS_ACCESS_KEY_ID?: string;
   AWS_SECRET_ACCESS_KEY?: string;
   POSTHOG_API_KEY?: string;
+  DASH_PASSWORD?: string; // secret
   LOCAL_DEV?: string; // .dev.vars only
 }
 

@@ -1,34 +1,47 @@
 import { Hono } from "hono";
 import type { Env } from "./env";
 import { getConfig, recordRun } from "./env";
-import { verifyAccessJwt } from "./access";
+import { LOGIN_PAGE, SESSION_COOKIE, SESSION_DAYS, clearFails, cookieHeader, lockedFor, makeSession, passwordMatches, recordFail, sessionValid } from "./auth";
+import { getCookie } from "hono/cookie";
 import { collectCosts, collectFleet, type CostRow, type FleetItem } from "./aws";
 import { collectPosthog } from "./posthog";
 import { summarize } from "./costs";
 
-type Ctx = { Bindings: Env; Variables: { email: string } };
+type Ctx = { Bindings: Env };
 const app = new Hono<Ctx>();
 
-// ---------- Access gate for /api ----------
-app.use("/api/*", async (c, next) => {
-  if (!c.env.ACCESS_AUD || !c.env.ACCESS_TEAM_DOMAIN) {
-    // Only `wrangler dev` may run without Access: LOCAL_DEV comes from .dev.vars,
-    // which is gitignored and never deployed.
-    if (c.env.LOCAL_DEV === "1") {
-      c.set("email", "local-dev");
-      return next();
-    }
-    return c.json({ error: "Access is not configured on this Worker" }, 500);
+// ---------- Login ----------
+// Everything except /login, /auth/* and /ingest/* needs a valid session cookie.
+app.get("/login", (c) => c.html(LOGIN_PAGE()));
+
+app.post("/auth/login", async (c) => {
+  const pw = c.env.DASH_PASSWORD;
+  if (!pw) return c.html(LOGIN_PAGE("DASH_PASSWORD is not set on the Worker yet."), 500);
+  const ip = c.req.header("CF-Connecting-IP") ?? "unknown";
+  const wait = await lockedFor(c.env.DB, ip);
+  if (wait > 0) return c.html(LOGIN_PAGE(`Too many wrong passwords. Try again in ${Math.ceil(wait / 60)} min.`), 429);
+  const form = await c.req.parseBody();
+  if (!(await passwordMatches(String(form.password ?? ""), pw))) {
+    await recordFail(c.env.DB, ip);
+    return c.html(LOGIN_PAGE("Wrong password."), 401);
   }
-  const token = c.req.header("Cf-Access-Jwt-Assertion");
-  if (!token) return c.json({ error: "unauthorized" }, 401);
-  try {
-    const { email } = await verifyAccessJwt(token, { teamDomain: c.env.ACCESS_TEAM_DOMAIN, aud: c.env.ACCESS_AUD });
-    c.set("email", email);
-  } catch {
-    return c.json({ error: "unauthorized" }, 401);
-  }
-  return next();
+  await clearFails(c.env.DB, ip);
+  c.header("Set-Cookie", cookieHeader(await makeSession(pw), SESSION_DAYS * 86400));
+  return c.redirect("/", 303);
+});
+
+app.post("/auth/logout", (c) => {
+  c.header("Set-Cookie", cookieHeader("", 0));
+  return c.redirect("/login", 303);
+});
+
+app.use("*", async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (path === "/login" || path.startsWith("/auth/") || path.startsWith("/ingest/")) return next();
+  if (c.env.LOCAL_DEV === "1" && !c.env.DASH_PASSWORD) return next(); // wrangler dev only (.dev.vars)
+  const ok = c.env.DASH_PASSWORD && (await sessionValid(getCookie(c, SESSION_COOKIE), c.env.DASH_PASSWORD));
+  if (ok) return next();
+  return path.startsWith("/api/") ? c.json({ error: "unauthorized" }, 401) : c.redirect("/login", 302);
 });
 
 // ---------- API ----------
@@ -89,6 +102,9 @@ app.post("/api/run/:collector", async (c) => {
 // Phase 2 adds /ingest/v1/* (HMAC-checked, see hmac.ts).
 app.all("/ingest/*", (c) => c.json({ error: "not yet" }, 404));
 app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
+
+// Logged in: serve the UI.
+app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
 // ---------- Schedules (UTC) ----------
 const JOBS: Record<string, (env: Env) => Promise<number>> = {

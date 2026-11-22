@@ -4,7 +4,7 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-11-01",
   // Nobody reaches the Worker except through the two custom domains below:
-  // ops.taptry.in sits behind Cloudflare Access; ingest.taptry.in checks HMAC.
+  // ops.taptry.in needs the dashboard password; ingest.taptry.in checks HMAC.
   "workers_dev": false,
   "preview_urls": false,
   "routes": [
@@ -15,7 +15,7 @@
     "directory": "../web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/ingest/*"]
+    "run_worker_first": true
   },
   "d1_databases": [
     { "binding": "DB", "database_name": "taptry-ops", "database_id": "REPLACE_AFTER_wrangler_d1_create", "migrations_dir": "migrations" }
@@ -23,12 +23,10 @@
   // Cloudflare crons run in UTC. 03:00 UTC = 8:30 AM IST.
   "triggers": { "crons": ["*/15 * * * *", "5 * * * *", "0 3 * * *"] },
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
     "POSTHOG_HOST": "https://us.posthog.com",
     "POSTHOG_DASHBOARDS": "2090168,2090237",
     "AWS_REGIONS": "ap-south-1,eu-north-1"
   }
   // Secrets (set with `wrangler secret put NAME` or in the dashboard, never here):
-  // AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, POSTHOG_API_KEY
+  // DASH_PASSWORD, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, POSTHOG_API_KEY
 }

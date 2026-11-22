@@ -1,47 +1,26 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { verifyAccessJwt, resetKeyCache } from "../src/access";
+import { makeSession, passwordMatches, sessionValid } from "../src/auth";
 import { sign, verifyIngest } from "../src/hmac";
 import { costWindow, parseCe, parseInstances, parseAddresses, parseVolumes } from "../src/aws";
 import { summarize } from "../src/costs";
 import { tilesToRows } from "../src/posthog";
 
-const b64url = (b: Uint8Array | string) =>
-  Buffer.from(typeof b === "string" ? b : b).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-describe("Access JWT", () => {
-  const team = "taptry.cloudflareaccess.com";
-  const aud = "aud123";
-  let priv: CryptoKey, jwk: JsonWebKey;
-  beforeEach(async () => {
-    resetKeyCache();
-    const kp = (await crypto.subtle.generateKey(
-      { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-      true, ["sign", "verify"],
-    )) as CryptoKeyPair;
-    priv = kp.privateKey;
-    jwk = (await crypto.subtle.exportKey("jwk", kp.publicKey)) as JsonWebKey;
+describe("password login", () => {
+  it("matches only the exact password", async () => {
+    expect(await passwordMatches("correct horse battery", "correct horse battery")).toBe(true);
+    expect(await passwordMatches("correct horse batterY", "correct horse battery")).toBe(false);
+    expect(await passwordMatches("", "correct horse battery")).toBe(false);
   });
-  const make = async (payload: object, kid = "k1") => {
-    const h = b64url(JSON.stringify({ alg: "RS256", kid }));
-    const p = b64url(JSON.stringify(payload));
-    const sig = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", priv, new TextEncoder().encode(`${h}.${p}`)));
-    return `${h}.${p}.${b64url(sig)}`;
-  };
-  const fetcher = (async () => new Response(JSON.stringify({ keys: [{ ...jwk, kid: "k1" }] }))) as unknown as typeof fetch;
-  const good = { aud: [aud], iss: `https://${team}`, exp: Math.floor(Date.now() / 1000) + 600, email: "romilrajrana1@gmail.com" };
-
-  it("accepts a valid token", async () => {
-    expect(await verifyAccessJwt(await make(good), { teamDomain: team, aud, fetcher })).toEqual({ email: "romilrajrana1@gmail.com" });
-  });
-  it("rejects wrong audience, issuer, expiry, key and tampering", async () => {
-    const o = { teamDomain: team, aud, fetcher };
-    await expect(verifyAccessJwt(await make({ ...good, aud: ["other"] }), o)).rejects.toThrow("audience");
-    await expect(verifyAccessJwt(await make({ ...good, iss: "https://evil.com" }), o)).rejects.toThrow("issuer");
-    await expect(verifyAccessJwt(await make({ ...good, exp: 1 }), o)).rejects.toThrow("expired");
-    await expect(verifyAccessJwt(await make(good, "k2"), o)).rejects.toThrow("key id");
-    const t = (await make(good)).split(".");
-    t[1] = b64url(JSON.stringify({ ...good, email: "attacker@x.com" }));
-    await expect(verifyAccessJwt(t.join("."), o)).rejects.toThrow("signature");
+  it("session cookie: valid, expired, tampered, or signed with an old password", async () => {
+    const now = 1_800_000_000;
+    const cookie = await makeSession("pw-1", now);
+    expect(await sessionValid(cookie, "pw-1", now + 60)).toBe(true);
+    expect(await sessionValid(cookie, "pw-1", now + 31 * 86400)).toBe(false); // past 30 days
+    expect(await sessionValid(cookie, "pw-2", now + 60)).toBe(false); // password changed
+    const [exp, sig] = cookie.split(".");
+    expect(await sessionValid(`${Number(exp) + 999999}.${sig}`, "pw-1", now)).toBe(false); // extended expiry
+    expect(await sessionValid(undefined, "pw-1", now)).toBe(false);
+    expect(await sessionValid("garbage", "pw-1", now)).toBe(false);
   });
 });
 
