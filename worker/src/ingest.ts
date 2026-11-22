@@ -197,6 +197,15 @@ export function classifyMail(m: MailIn, owner: string, ownAddrs: string[]): { di
   return { direction: "in", kind: auto ? "auto" : "human" };
 }
 
+/**
+ * Workspace accounts report the web app as script.google.com/a/macros/<domain>/s/<id>/exec
+ * (or with a wildcard in place of the domain). The plain /macros/s/<id>/exec form works for every account, so store that.
+ */
+export function normalizeWebappUrl(url?: string): string | null {
+  const m = /^https:\/\/script\.google\.com\/(?:a\/(?:macros\/)?[^/]+\/)?(?:macros\/)?s\/([\w-]+)\/exec\/?$/.exec(url ?? "");
+  return m ? `https://script.google.com/macros/s/${m[1]}/exec` : null;
+}
+
 export async function ingestMail(env: Env, inbox: string, body: { messages: MailIn[]; webapp?: string }): Promise<number> {
   const owner = env.OWNER_EMAIL.toLowerCase();
   const own = ["connect", "reachout", "hello"].map((k) => `${k}@taptry.in`);
@@ -222,8 +231,9 @@ export async function ingestMail(env: Env, inbox: string, body: { messages: Mail
   const stmts: D1PreparedStatement[] = [];
   if (rows.length) stmts.push(jsonUpsert(env.DB, "mail_msgs", Object.keys(rows[0]), rows));
   stmts.push(env.DB.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").bind(`last_push_mail_${inbox}`, JSON.stringify(nowIso())));
-  if (body.webapp && /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(body.webapp)) {
-    stmts.push(env.DB.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").bind(`gas_url_${inbox}`, JSON.stringify(body.webapp)));
+  const webapp = normalizeWebappUrl(body.webapp);
+  if (webapp) {
+    stmts.push(env.DB.prepare("INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)").bind(`gas_url_${inbox}`, JSON.stringify(webapp)));
   }
   await env.DB.batch(stmts);
   return rows.length;

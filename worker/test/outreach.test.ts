@@ -77,3 +77,14 @@ describe("Apps Script signature format", () => {
     expect(s).toBe(crypto2.createHmac("sha256", "k").update("1.{}").digest("hex"));
   });
 });
+
+import { normalizeWebappUrl } from "../src/ingest";
+import { test as t2, expect as e2 } from "vitest";
+t2("web app URLs from Workspace accounts are normalised", () => {
+  const plain = "https://script.google.com/macros/s/AKfy-cb_1/exec";
+  e2(normalizeWebappUrl(plain)).toBe(plain);
+  e2(normalizeWebappUrl("https://script.google.com/a/macros/taptry.in/s/AKfy-cb_1/exec")).toBe(plain);
+  e2(normalizeWebappUrl("https://script.google.com/a/*/macros/s/AKfy-cb_1/exec")).toBe(plain);
+  e2(normalizeWebappUrl("https://evil.example/macros/s/x/exec")).toBeNull();
+  e2(normalizeWebappUrl(undefined)).toBeNull();
+});
