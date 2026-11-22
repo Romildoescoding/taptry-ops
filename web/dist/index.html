@@ -1,1 +1,227 @@
-<!doctype html><title>TapTry Ops</title><p>UI shell coming.
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TapTry Ops</title>
+<style>
+:root{--ink:#0f172a;--muted:#64748b;--line:#e2e8f0;--soft:#f8fafc;--violet:#6d28d9;--violet2:#a78bfa;--good:#047857;--bad:#b91c1c;--warn:#b45309}
+*{box-sizing:border-box}
+body{margin:0;background:#eef0f4;color:var(--ink);font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-variant-numeric:tabular-nums}
+header{background:var(--ink);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:2}
+header b{font-size:15px;letter-spacing:1px;text-transform:uppercase;color:#cbd5e1}
+nav{display:flex;gap:4px;flex-wrap:wrap}
+nav a{color:#cbd5e1;text-decoration:none;padding:7px 12px;border-radius:8px;font-size:14px;font-weight:600}
+nav a.on{background:#fff;color:var(--ink)}
+header form{margin-left:auto}
+header button{background:transparent;border:1px solid #475569;color:#cbd5e1;border-radius:8px;padding:6px 10px;cursor:pointer}
+main{max-width:1100px;margin:0 auto;padding:20px}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.card{background:#fff;border-radius:12px;padding:18px;border:1px solid var(--line)}
+.card h3{margin:0 0 10px;font-size:12px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)}
+.hero{font-size:52px;font-weight:800;line-height:1}
+.big{font-size:30px;font-weight:800}
+.sub{color:var(--muted);font-size:13px;margin-top:6px}
+.wide{grid-column:1/-1}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{padding:7px 4px;border-bottom:1px solid #f1f5f9;text-align:left}
+th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+td.r,th.r{text-align:right}
+.bar{height:10px;background:var(--violet2);border-radius:3px}
+.track{background:#f1f5f9;border-radius:3px}
+.cols{display:flex;align-items:flex-end;gap:2px;height:120px}
+.cols div{flex:1;background:var(--violet2);border-radius:2px 2px 0 0;min-height:1px}
+.cols div.cur{background:var(--violet)}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+.ok{background:#dcfce7;color:var(--good)}.err{background:#fee2e2;color:var(--bad)}.warn{background:#fef3c7;color:var(--warn)}
+.note{background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:10px;padding:10px 14px;font-size:13px;margin-bottom:14px}
+.empty{color:var(--muted);font-size:14px;padding:20px 0;text-align:center}
+.btn{background:var(--violet);color:#fff;border:0;border-radius:8px;padding:7px 12px;font-weight:600;cursor:pointer;font-size:13px}
+.btn.ghost{background:#fff;color:var(--ink);border:1px solid #cbd5e1}
+input,textarea{font:inherit;border:1px solid #cbd5e1;border-radius:8px;padding:8px;width:100%}
+.ret td{text-align:center;font-size:12px}
+a{color:var(--violet)}
+.up{color:var(--good);font-weight:600}.down{color:var(--bad);font-weight:600}
+</style>
+</head>
+<body>
+<header>
+  <b>TapTry Ops</b>
+  <nav id="nav">
+    <a href="#overview">Overview</a><a href="#costs">Costs</a><a href="#product">Product</a><a href="#system">System</a>
+  </nav>
+  <form method="post" action="/auth/logout"><button>Log out</button></form>
+</header>
+<main id="main"><div class="empty">Loading…</div></main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const usd = (n) => n == null ? "–" : "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const num = (n) => n == null ? "–" : Number(n).toLocaleString("en-IN");
+const ago = (iso) => {
+  if (!iso) return "never";
+  const m = Math.round((Date.now() - new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z")) / 60000);
+  return m < 1 ? "just now" : m < 60 ? m + " min ago" : m < 1440 ? Math.round(m / 60) + " h ago" : Math.round(m / 1440) + " d ago";
+};
+const ist = (iso) => iso ? new Date(iso).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "–";
+
+async function api(path, opts) {
+  const r = await fetch(path, { credentials: "same-origin", ...opts });
+  if (r.status === 401) { location.href = "/login"; throw new Error("login"); }
+  if (!r.ok) throw new Error(path + ": HTTP " + r.status);
+  return r.json();
+}
+
+// ---------- Costs ----------
+function costsView(c, compact) {
+  const pct = c.budget ? Math.min(100, (c.mtd / c.budget) * 100) : 0;
+  const fpct = c.budget ? Math.min(100 - pct, Math.max(0, ((c.forecast - c.mtd) / c.budget) * 100)) : 0;
+  const change = c.changePct == null ? "" : `<span class="${c.changePct > 0 ? "down" : "up"}">${c.changePct > 0 ? "▲" : "▼"} ${Math.abs(c.changePct)}%</span> vs last month, same day`;
+  const head = `
+    <div class="card wide">
+      <h3>AWS this month · to ${esc(c.through ?? "–")} (UTC)</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:24px;align-items:flex-end">
+        <div><div class="hero">${usd(c.mtd)}</div><div class="sub">${c.budget ? "of " + usd(c.budget) + " budget" : "no budget set"} · ${change}</div></div>
+        <div><div class="big">${usd(c.forecast)}</div><div class="sub">forecast to month end (avg ${usd(c.avg7)}/day, last 7 days)</div></div>
+        <div><div class="big">${usd(c.fleet.runRatePerDay)}<span style="font-size:14px;color:var(--muted)">/day</span></div><div class="sub">fleet run-rate now · ${c.fleet.instancesRunning} running</div></div>
+      </div>
+      ${c.budget ? `<div style="display:flex;margin-top:14px;height:12px;border-radius:6px;overflow:hidden;background:#e2e8f0"><div style="width:${pct}%;background:var(--ink)"></div><div style="width:${fpct}%;background:#c4b5fd"></div></div><div class="sub">dark = spent · light = forecast to month end · grey = budget left</div>` : ""}
+      ${c.fleet.stockholmLeftovers.length ? `<div class="note" style="margin:14px 0 0">Still in Stockholm: ${c.fleet.stockholmLeftovers.map(esc).join(", ")}</div>` : ""}
+    </div>`;
+  if (compact) return head;
+  const max = Math.max(1, ...c.daily.map((d) => d.usd));
+  const curMonth = c.month;
+  const rows = (list) => list.length ? list.map((r) => `<tr><td>${esc(r.name)}</td><td class="r">${usd(r.usd)}</td></tr>`).join("") : `<tr><td class="empty" colspan="2">No data yet</td></tr>`;
+  const regions = Object.entries(c.fleet.byRegion);
+  return `<div class="grid">${head}
+    <div class="card wide"><h3>Daily cost · last month and this month</h3>
+      ${c.daily.length ? `<div class="cols">${c.daily.map((d) => `<div class="${d.day.startsWith(curMonth) ? "cur" : ""}" style="height:${(d.usd / max) * 100}%" title="${d.day}: ${usd(d.usd)}"></div>`).join("")}</div>
+      <div class="sub">${esc(c.daily[0].day)} → ${esc(c.daily[c.daily.length - 1].day)} · darker = this month</div>` : `<div class="empty">No cost data yet. It arrives daily at 8:30 AM IST, or press "Run now" on the System tab.</div>`}
+    </div>
+    <div class="card"><h3>By service, this month</h3><table>${rows(c.byService)}</table></div>
+    <div class="card"><h3>By region, this month</h3><table>${rows(c.byRegion)}</table></div>
+    <div class="card" style="grid-column:span 2"><h3>Fleet now · ${ago(c.fleetTakenAt)}</h3>
+      ${regions.length ? `<table><tr><th>Region</th><th class="r">Running</th><th class="r">Stopped</th><th class="r">IPs</th><th class="r">EBS GB</th></tr>
+      ${regions.map(([r, b]) => `<tr><td>${esc(r)}</td><td class="r">${b.running}</td><td class="r">${b.stopped}</td><td class="r">${b.ips}</td><td class="r">${b.volumesGb}</td></tr>`).join("")}</table>` : `<div class="empty">No fleet snapshot yet</div>`}
+      ${c.fleet.unpricedTypes.length ? `<div class="sub">No price set for ${c.fleet.unpricedTypes.map(esc).join(", ")}, so the run-rate leaves them out. Add them under Settings below.</div>` : ""}
+    </div>
+    <div class="card"><h3>Settings</h3>
+      <label class="sub">Monthly AWS budget (USD)</label><input id="budget" type="number" step="1" value="${c.budget ?? ""}">
+      <label class="sub">On-demand $/hour by "region:type", e.g. {"ap-south-1:c7i.xlarge": 0.18}</label>
+      <textarea id="prices" rows="3"></textarea>
+      <div style="margin-top:10px"><button class="btn" id="saveCfg">Save</button> <span id="cfgMsg" class="sub"></span></div>
+    </div>
+  </div>`;
+}
+
+// ---------- Product (PostHog tiles) ----------
+function seriesOf(result) {
+  return Array.isArray(result) ? result.filter((s) => s && typeof s === "object" && Array.isArray(s.data)) : [];
+}
+function tileView(t, host) {
+  const r = t.result;
+  let body = "";
+  const kind = t.kind || "";
+  const trends = seriesOf(r);
+  if (kind.includes("Funnel") || (Array.isArray(r) && r[0] && "order" in r[0] && "count" in r[0])) {
+    const steps = Array.isArray(r[0]) ? r[0] : r;
+    const first = steps[0]?.count || 0;
+    let worst = null;
+    steps.forEach((s, i) => { if (i && steps[i - 1].count) { const drop = 1 - s.count / steps[i - 1].count; if (!worst || drop > worst.drop) worst = { i, drop }; } });
+    body = `<table>${steps.map((s, i) => {
+      const prev = i ? steps[i - 1].count : s.count;
+      const keep = prev ? Math.round((s.count / prev) * 100) : 0;
+      return `<tr${worst && worst.i === i ? ' style="background:#fef2f2"' : ""}><td>${esc(s.custom_name || s.name)}</td><td class="r"><b>${num(s.count)}</b></td>
+        <td style="width:40%"><div class="track"><div class="bar" style="width:${first ? (s.count / first) * 100 : 0}%"></div></div></td>
+        <td class="r sub">${i ? keep + "%" : ""}</td></tr>`;
+    }).join("")}</table>${worst ? `<div class="sub">Biggest drop: into "${esc(steps[worst.i].custom_name || steps[worst.i].name)}", ${Math.round(worst.drop * 100)}% lost</div>` : ""}`;
+  } else if (kind.includes("Retention") || (Array.isArray(r) && r[0] && Array.isArray(r[0].values))) {
+    body = `<div style="overflow-x:auto"><table class="ret"><tr><th>Cohort</th>${(r[0]?.values ?? []).map((_, i) => `<th>${i}</th>`).join("")}</tr>
+      ${r.map((row) => { const base = row.values?.[0]?.count || 0; return `<tr><td style="text-align:left">${esc(row.label || row.date)}</td>${(row.values ?? []).map((v) => {
+        const p = base ? Math.round((v.count / base) * 100) : 0;
+        return `<td style="background:rgba(109,40,217,${(p / 100) * 0.8})${p > 55 ? ";color:#fff" : ""}">${base ? p + "%" : ""}</td>`; }).join("")}</tr>`; }).join("")}
+    </table></div>`;
+  } else if (trends.length) {
+    body = trends.slice(0, 4).map((s) => {
+      const total = s.aggregated_value ?? s.count ?? s.data.reduce((a, b) => a + (b || 0), 0);
+      const max = Math.max(1, ...s.data);
+      const last = s.data[s.data.length - 1], prev = s.data[s.data.length - 2];
+      return `<div style="margin-bottom:10px"><div class="big">${num(Math.round(total))}</div><div class="sub">${esc(s.label || "")}</div>
+        ${s.data.length > 1 ? `<div class="cols" style="height:48px;margin-top:6px">${s.data.map((v, i) => `<div class="${i === s.data.length - 1 ? "cur" : ""}" style="height:${(v / max) * 100}%" title="${esc((s.days || s.labels || [])[i] || "")}: ${v}"></div>`).join("")}</div>` : ""}
+      </div>`;
+    }).join("");
+  } else if (r == null || (Array.isArray(r) && !r.length)) {
+    body = `<div class="empty">No data yet</div>`;
+  } else {
+    body = `<div class="sub">This tile type isn't drawn here yet.</div>`;
+  }
+  return `<div class="card"><h3>${esc(t.name)}</h3>${body}
+    <div class="sub">PostHog computed ${ago(t.computed_at)} · <a href="${esc(host)}/insights/${esc(t.short_id)}" target="_blank" rel="noopener">open in PostHog</a></div></div>`;
+}
+function productView(p) {
+  const names = { "2090168": "Starter", "2090237": "Analytics Wizard" };
+  const ids = Object.keys(p.dashboards);
+  if (!ids.length) return `<div class="card"><div class="empty">No PostHog data yet. Add POSTHOG_API_KEY, then press "Run now" for posthog on the System tab.</div></div>`;
+  return ids.map((id) => `<h2 style="font-size:16px;margin:18px 0 10px">${esc(names[id] || "Dashboard " + id)} <a style="font-size:12px" href="${esc(p.host)}/dashboard/${esc(id)}" target="_blank" rel="noopener">open</a></h2>
+    <div class="grid">${p.dashboards[id].map((t) => tileView(t, p.host)).join("")}</div>`).join("");
+}
+
+// ---------- System ----------
+const COLLECTORS = { aws_cost: "AWS costs (daily 8:30 AM)", aws_fleet: "AWS fleet (hourly)", posthog: "PostHog (hourly)" };
+function systemView(s) {
+  const byName = Object.fromEntries(s.collectors.map((c) => [c.collector, c]));
+  return `<div class="card"><h3>Collectors</h3><table>
+    <tr><th>Collector</th><th>Status</th><th>Last run</th><th>Last success</th><th></th></tr>
+    ${Object.entries(COLLECTORS).map(([k, label]) => { const c = byName[k];
+      const st = !c ? `<span class="pill warn">not run yet</span>` : !c.finished_at ? `<span class="pill warn">running</span>` : c.ok ? `<span class="pill ok">ok · ${c.rows} rows</span>` : `<span class="pill err">failed</span>`;
+      return `<tr><td>${label}${c && !c.ok && c.error ? `<div class="sub" style="color:var(--bad)">${esc(c.error)}</div>` : ""}</td><td>${st}</td><td>${c ? ist(c.started_at) : "–"}</td><td>${c?.last_ok ? ago(c.last_ok) : "never"}</td>
+        <td class="r"><button class="btn ghost" data-run="${k}">Run now</button></td></tr>`; }).join("")}
+  </table><div class="sub">Outreach, leads and the Needs-you queue arrive in Phase 2.</div></div>`;
+}
+
+// ---------- Router ----------
+async function render() {
+  const tab = (location.hash || "#overview").slice(1);
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + tab));
+  const main = $("#main");
+  try {
+    if (tab === "costs") {
+      const c = await api("/api/costs");
+      main.innerHTML = costsView(c);
+      api("/api/config").then((cfg) => { $("#prices").value = JSON.stringify(cfg.ec2_prices || {}); }).catch(() => {});
+      $("#saveCfg").onclick = async () => {
+        try {
+          const prices = $("#prices").value.trim() ? JSON.parse($("#prices").value) : null;
+          await api("/api/config/aws_budget_usd", { method: "PUT", body: JSON.stringify($("#budget").value ? Number($("#budget").value) : null) });
+          if (prices) await api("/api/config/ec2_prices", { method: "PUT", body: JSON.stringify(prices) });
+          render();
+        } catch (e) { $("#cfgMsg").textContent = "Couldn't save: " + e.message; }
+      };
+    } else if (tab === "product") {
+      main.innerHTML = productView(await api("/api/product"));
+    } else if (tab === "system") {
+      main.innerHTML = systemView(await api("/api/system"));
+      document.querySelectorAll("[data-run]").forEach((b) => b.onclick = async () => {
+        b.disabled = true; b.textContent = "Running…";
+        try { await api("/api/run/" + b.dataset.run, { method: "POST" }); } finally { render(); }
+      });
+    } else {
+      const [c, p, s] = await Promise.all([api("/api/costs"), api("/api/product"), api("/api/system")]);
+      const failed = s.collectors.filter((x) => x.finished_at && !x.ok);
+      const firstTiles = Object.values(p.dashboards)[0] || [];
+      main.innerHTML = `${failed.length ? `<div class="note">${failed.length} collector(s) failing: ${failed.map((f) => esc(f.collector)).join(", ")}. See <a href="#system">System</a>.</div>` : ""}
+        <div class="grid">${costsView(c, true)}</div>
+        <h2 style="font-size:16px;margin:18px 0 10px">Product</h2>
+        <div class="grid">${firstTiles.length ? firstTiles.slice(0, 3).map((t) => tileView(t, p.host)).join("") : `<div class="card"><div class="empty">No PostHog data yet</div></div>`}</div>
+        <div class="sub" style="margin-top:16px">Outreach, leads and the Needs-you queue arrive in Phase 2.</div>`;
+    }
+  } catch (e) {
+    if (e.message !== "login") main.innerHTML = `<div class="note">Couldn't load: ${esc(e.message)}</div>`;
+  }
+}
+window.addEventListener("hashchange", render);
+render();
+</script>
+</body>
+</html>

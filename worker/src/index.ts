@@ -82,6 +82,15 @@ app.get("/api/system", async (c) => {
   return c.json({ collectors: rows.results });
 });
 
+app.get("/api/config", async (c) => {
+  const db = c.env.DB;
+  return c.json({
+    aws_budget_usd: await getConfig<number | null>(db, "aws_budget_usd", null),
+    ec2_prices: await getConfig<Record<string, number>>(db, "ec2_prices", {}),
+    ipv4_usd_per_hour: await getConfig<number>(db, "ipv4_usd_per_hour", 0.005),
+  });
+});
+
 app.put("/api/config/:key", async (c) => {
   const allowed = ["aws_budget_usd", "ec2_prices", "ipv4_usd_per_hour"];
   const key = c.req.param("key");
